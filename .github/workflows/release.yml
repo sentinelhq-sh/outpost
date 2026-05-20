@@ -21,7 +21,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Lint
-        run: make lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
 
       - name: Test
         run: make test

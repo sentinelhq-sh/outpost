@@ -10,10 +10,8 @@
 replicaCount: 2
 
 config:
+  agentMode: "prometheus"
   clusterName: "default"
-  apiUrl: ""
-  apiKey: ""
-  prometheusAddr: ":9091"
 
 serviceMonitor:
   enabled: false   # set to true if prometheus-operator is installed

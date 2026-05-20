@@ -1,7 +1,15 @@
 bin/
+dist/
+outpost
 *.exe
 *.test
 *.out
 coverage.txt
+
 .idea/
 .vscode/
+.claude/settings.local.json
+
+.env
+.env.*
+!.env.example

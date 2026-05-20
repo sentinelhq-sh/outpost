@@ -8,17 +8,18 @@ image:
 imagePullSecrets: []
 
 nameOverride: ""
-fullnameOverride: ""
+fullnameOverride: "sentinelhq-outpost"
 
-# SentinelHQ push mode — set apiUrl + apiKey to enable.
-# Leave both empty to run in standalone Prometheus mode.
 config:
+  # agentMode: sentinel (push to backend) | prometheus (metrics only)
+  # /metrics is always exposed on prometheusAddr regardless of mode.
+  agentMode: "sentinel"
   clusterName: "default"
   apiUrl: ""
   apiKey: ""
+  addr: ":8080"
   pollInterval: "5m"
   httpTimeout: "10s"
-  prometheusAddr: ""   # e.g. ":9091" to enable /metrics endpoint
 
 serviceAccount:
   create: true
@@ -40,8 +41,13 @@ resources:
   limits:
     memory: 128Mi
 
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
 nodeSelector: {}
 tolerations: []
+# Override to replace the default hostname anti-affinity.
 affinity: {}
 
 # Liveness / readiness probes against the healthz server (:9090).

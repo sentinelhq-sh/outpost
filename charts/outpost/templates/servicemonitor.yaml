@@ -14,7 +14,7 @@ spec:
     matchLabels:
       {{- include "outpost.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: metrics
+    - port: http
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
       path: /metrics

@@ -19,6 +19,7 @@ import (
 // to slow down the test run.
 func newTestClient(srv *httptest.Server) *Client {
 	return New(&config.Config{
+		Mode:        config.ModeSentinel,
 		APIBaseURL:  srv.URL,
 		APIKey:      "test-key",
 		HTTPTimeout: 2 * time.Second,

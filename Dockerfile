@@ -22,6 +22,6 @@ FROM gcr.io/distroless/static:nonroot
 
 COPY --from=builder /outpost /outpost
 
-EXPOSE 8080 9090
+EXPOSE 8080
 
 ENTRYPOINT ["/outpost"]

@@ -76,10 +76,10 @@ func New(client kubernetes.Interface, opts Options, log *slog.Logger) (*Elector,
 		return nil, fmt.Errorf("LeaseName is required")
 	}
 	if opts.Namespace == "" {
-		return nil, fmt.Errorf("Namespace is required")
+		return nil, fmt.Errorf("namespace is required")
 	}
 	if opts.Identity == "" {
-		return nil, fmt.Errorf("Identity is required")
+		return nil, fmt.Errorf("identity is required")
 	}
 	if opts.LeaseDuration == 0 {
 		def := DefaultOptions()

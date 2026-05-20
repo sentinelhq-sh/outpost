@@ -1,70 +1,118 @@
 # SentinelHQ Outpost
 
-Kubernetes agent that watches your `CronJob`, `Job`, and `Pod` resources
-and reports their lifecycle to the SentinelHQ server. Runs as a
-**Deployment** with `replicas: 2+` and **leader election** so failover is
-sub-second. Read-only `ClusterRole` on `batch/v1` and `core/v1`.
+Kubernetes agent that watches `CronJob` and `Job` resources and reports their
+lifecycle to the SentinelHQ backend or exposes them as Prometheus metrics.
+Runs as a **Deployment** with `replicas: 2` and **leader election** so
+failover is sub-second with no event duplication.
 
-> Why Deployment with HA and not DaemonSet? The agent talks to the Kubernetes
-> API for cluster-scoped objects — it does not need per-node access. Two pods
-> in active/standby (only the leader emits events) gives sub-second failover
-> with no event duplication, for a fraction of the resources a DaemonSet
-> would consume on a 50-node cluster.
+[![Release](https://img.shields.io/github/v/release/sentinelhq-sh/outpost)](https://github.com/sentinelhq-sh/outpost/releases)
+[![License](https://img.shields.io/github/license/sentinelhq-sh/outpost)](LICENSE)
 
-Currently in **Phase 1**: configuration loading, HTTP reporter, healthz.
-Kubernetes watch loops and leader election land in Phase 2.
+## Installation
+
+### Helm (recommended)
+
+```sh
+helm install outpost oci://ghcr.io/sentinelhq-sh/charts/outpost \
+  --version 0.1.1 \
+  --namespace sentinelhq --create-namespace \
+  --set config.clusterName=prod \
+  --set config.apiUrl=https://api.sentinelhq.cloud \
+  --set config.apiKey=<token>
+```
+
+Standalone Prometheus mode (no SentinelHQ account required):
+
+```sh
+helm install outpost oci://ghcr.io/sentinelhq-sh/charts/outpost \
+  --version 0.1.1 \
+  --namespace sentinelhq --create-namespace \
+  --set config.clusterName=prod \
+  --set config.prometheusAddr=":9091"
+```
+
+### Helm values
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `config.agentMode` | `sentinel` | Output mode: `sentinel`, `prometheus`, or `both`. |
+| `config.clusterName` | `default` | Logical cluster label sent on every event. |
+| `config.apiUrl` | `""` | SentinelHQ backend URL. Required in `sentinel` and `both` modes. |
+| `config.apiKey` | `""` | API key. Mount via `existingSecret` in production. |
+| `config.prometheusAddr` | `""` | `/metrics` listen address. Required in `prometheus` and `both` modes. |
+| `config.pollInterval` | `5m` | Re-sync interval. Minimum 30s. |
+| `replicaCount` | `2` | Number of replicas. Keep at 2+ for HA. |
+| `podDisruptionBudget.enabled` | `false` | Enable PodDisruptionBudget (`minAvailable: 1`). |
+| `existingSecret` | `""` | Use an existing Secret for the API key. |
+| `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor. |
+
+Full reference: [`charts/outpost/values.yaml`](charts/outpost/values.yaml).
 
 ## Configuration
 
 All settings come from environment variables (12-factor):
 
-| Variable | Required | Default | Description |
-| -- | -- | -- | -- |
-| `SENTINELHQ_API_URL` | yes | — | Root URL of the SentinelHQ server (no trailing slash). |
-| `SENTINELHQ_API_KEY` | yes | — | Project API key from the dashboard. Mount via a Secret. |
-| `SENTINELHQ_CLUSTER_NAME` | no | `default` | Logical label sent on every event. |
-| `SENTINELHQ_HEALTHZ_ADDR` | no | `:9090` | Listen address for `/healthz` and `/readyz`. |
-| `SENTINELHQ_POLL_INTERVAL` | no | `5m` | How often the registrar re-syncs. Minimum 30s. |
-| `SENTINELHQ_HTTP_TIMEOUT` | no | `10s` | Per-request timeout. |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SENTINELHQ_AGENT_MODE` | — | Output mode: `sentinel`, `prometheus`, or `both`. Required. |
+| `SENTINELHQ_API_URL` | — | SentinelHQ backend URL. Required in `sentinel` and `both` modes. |
+| `SENTINELHQ_API_KEY` | — | Project API key. Required in `sentinel` and `both` modes. |
+| `SENTINELHQ_CLUSTER_NAME` | `default` | Logical label sent on every event. |
+| `SENTINELHQ_HEALTHZ_ADDR` | `:9090` | Listen address for `/healthz` and `/readyz`. |
+| `SENTINELHQ_PROMETHEUS_ADDR` | `""` | Listen address for `/metrics`. Required in `prometheus` and `both` modes. |
+| `SENTINELHQ_POLL_INTERVAL` | `5m` | Re-sync interval. Minimum 30s. |
+| `SENTINELHQ_HTTP_TIMEOUT` | `10s` | Per-request timeout. |
 
-The agent will refuse to start if a required variable is missing, with a
-structured error listing every problem at once.
+The agent refuses to start and lists every missing field at once.
+
+## Output modes
+
+`/metrics` is always exposed on `SENTINELHQ_PROMETHEUS_ADDR` (default `:9091`) regardless of mode.
+
+| Mode | Description |
+| --- | --- |
+| `sentinel` | Pushes events to the SentinelHQ backend. Requires `API_URL` + `API_KEY`. |
+| `prometheus` | Metrics only, no push to the SentinelHQ backend. |
 
 ## Run locally
 
 ```sh
-go build -o outpost ./cmd/outpost
+go build -o bin/outpost ./cmd/outpost
+
 SENTINELHQ_API_URL=http://127.0.0.1:8000 \
 SENTINELHQ_API_KEY=sentinel_live_xxxxxxxxxxxx \
-./outpost
+./bin/outpost
 ```
 
-Then probe the local endpoints:
-
 ```sh
-curl localhost:9090/healthz   # always 200 once the process is up
-curl localhost:9090/readyz    # 200 only after the server smoke test passes
+curl localhost:9090/healthz
+curl localhost:9090/readyz
 ```
 
-## Tests
+## Development
 
 ```sh
-go test ./...
+make build   # build ./bin/outpost
+make test    # run tests
+make lint    # vet + gofmt check
 ```
 
 ## Layout
 
 ```
-cmd/outpost/         # entry point: wiring + signal handling + healthz
-internal/config/     # env → typed Config + validation
-internal/reporter/   # HTTP client with Bearer auth + retry + backoff
-internal/version/    # build-time metadata (overridden by -ldflags)
+cmd/outpost/          # entry point: wiring, signal handling, healthz
+internal/config/      # env -> typed Config + validation
+internal/emitter/     # fan-out to push client and Prometheus collectors
+internal/k8sclient/   # Kubernetes client init
+internal/leaderelector/  # leader election via coordination.k8s.io leases
+internal/metrics/     # Prometheus collectors
+internal/registrar/   # CronJob sync with SentinelHQ backend
+internal/reporter/    # HTTP client with Bearer auth + retry + backoff
+internal/version/     # build-time metadata (overridden by -ldflags)
+internal/watcher/     # Kubernetes watch loops for CronJobs and Jobs
+charts/outpost/       # Helm chart
 ```
 
-## Roadmap
+## License
 
-- [ ] Phase 2: k8s informers (`CronJob`, `Job`, `Pod`) + annotation filter
-- [ ] Phase 3: discovery → register loop
-- [ ] Phase 4: event emission (Run / Complete / Fail / DurationExceeded)
-- [ ] Phase 5: Helm chart + Docker image
-- [ ] Phase 6: GitHub Actions release pipeline
+Apache 2.0 -- see [LICENSE](LICENSE).

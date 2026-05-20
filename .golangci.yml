@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - godot
+    - misspell
+    - noctx
+    - bodyclose
+
+linters-settings:
+  godot:
+    scope: declarations

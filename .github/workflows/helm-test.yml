@@ -1,0 +1,50 @@
+name: Helm
+
+on:
+  pull_request:
+    paths:
+      - "charts/**"
+      - ".github/workflows/helm-test.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "charts/**"
+
+jobs:
+  lint-test:
+    name: Lint and template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint (default values)
+        run: helm lint charts/outpost --strict
+
+      - name: Lint (Prometheus mode)
+        run: helm lint charts/outpost --strict -f charts/outpost/values-prometheus.yaml
+
+      - name: Template (default values)
+        run: |
+          helm template outpost charts/outpost \
+            --set config.apiUrl=https://api.sentinelhq.cloud \
+            --set config.apiKey=dummy \
+          | kubectl apply --dry-run=client -f -
+
+      - name: Template (Prometheus mode)
+        run: |
+          helm template outpost charts/outpost \
+            -f charts/outpost/values-prometheus.yaml \
+            --set config.clusterName=test \
+          | kubectl apply --dry-run=client -f -
+
+      - name: Template (PDB enabled)
+        run: |
+          helm template outpost charts/outpost \
+            --set config.apiUrl=https://api.sentinelhq.cloud \
+            --set config.apiKey=dummy \
+            --set podDisruptionBudget.enabled=true \
+          | kubectl apply --dry-run=client -f -

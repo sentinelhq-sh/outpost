@@ -1,11 +1,11 @@
 // Command outpost is the SentinelHQ Kubernetes agent. Runs as a Deployment
-// with replicas >= 2 + leader election. Two output modes, freely combinable:
+// with replicas >= 2 + leader election.
 //
-//   - Push to the SentinelHQ backend  (when API_URL + API_KEY are set).
-//   - Expose Prometheus /metrics      (when PROMETHEUS_ADDR is set).
+// Two modes controlled by SENTINELHQ_AGENT_MODE:
+//   - sentinel:    pushes CronJob lifecycle events to the SentinelHQ backend.
+//   - prometheus:  exposes /metrics only, no SentinelHQ account required.
 //
-// At least one must be configured. Standalone Prometheus mode requires no
-// SentinelHQ account — the agent can be used as a pure cluster observer.
+// /healthz, /readyz, and /metrics are always served on SENTINELHQ_ADDR (:8080).
 package main
 
 import (
@@ -49,11 +49,10 @@ func main() {
 	}
 
 	logger.Info("configuration loaded",
+		"mode", cfg.Mode,
 		"push_enabled", cfg.PushEnabled(),
-		"prometheus_enabled", cfg.PrometheusEnabled(),
 		"cluster", cfg.ClusterName,
-		"healthz_addr", cfg.HealthzAddr,
-		"prometheus_addr", cfg.PrometheusAddr,
+		"addr", cfg.Addr,
 		"poll_interval", cfg.PollInterval.String(),
 	)
 
@@ -66,10 +65,7 @@ func main() {
 		pushClient = reporter.New(cfg)
 	}
 
-	var prom *metrics.Collectors
-	if cfg.PrometheusEnabled() {
-		prom = metrics.New(cfg.ClusterName)
-	}
+	prom := metrics.New(cfg.ClusterName)
 
 	// k8s client — required regardless of mode (we always watch the cluster).
 	kclient, namespace, err := k8sclient.New()
@@ -111,24 +107,14 @@ func main() {
 	elector.OnAcquire(func(_ context.Context) {
 		leaderFlag.Store(true)
 		readyz.Store(true)
-		if prom != nil {
-			prom.SetLeader(true)
-		}
+		prom.SetLeader(true)
 	})
 	elector.OnLose(func() {
 		leaderFlag.Store(false)
-		if prom != nil {
-			prom.SetLeader(false)
-		}
+		prom.SetLeader(false)
 	})
 
-	// HTTP servers. healthz is always on. /metrics is on a separate port so
-	// the kubelet probe traffic and the Prometheus scrape traffic don't
-	// share a socket — easier NetworkPolicies, separate auth later if needed.
-	startHealthz(cfg.HealthzAddr, logger)
-	if cfg.PrometheusEnabled() {
-		startMetrics(cfg.PrometheusAddr, prom, logger)
-	}
+	startServer(cfg.Addr, prom, logger)
 
 	// In Prometheus-only mode there's no smoke-test to do — flip readyz
 	// immediately so the pod can accept scrapes right away.
@@ -203,11 +189,11 @@ func drain(
 	}
 }
 
-// ── Healthz / readyz ─────────────────────────────────────────────────────
+// ── HTTP server ───────────────────────────────────────────────────────────
 
 var readyz atomic.Bool
 
-func startHealthz(addr string, logger *slog.Logger) {
+func startServer(addr string, prom *metrics.Collectors, logger *slog.Logger) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -228,29 +214,15 @@ func startHealthz(addr string, logger *slog.Logger) {
 		_, _ = w.Write([]byte(`{"status":"not-ready"}`))
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		logger.Info("healthz listening", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("healthz crashed", "error", err.Error())
-		}
-	}()
-}
-
-// startMetrics spins up the Prometheus /metrics endpoint on its own port.
-// Kept separate from healthz so cluster operators can apply different
-// network policies (scrape access vs probe access).
-func startMetrics(addr string, prom *metrics.Collectors, logger *slog.Logger) {
-	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(prom.Registry(), promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
 	}))
 
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		logger.Info("prometheus /metrics listening", "addr", addr)
+		logger.Info("server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("metrics server crashed", "error", err.Error())
+			logger.Error("server crashed", "error", err.Error())
 		}
 	}()
 }

@@ -146,12 +146,12 @@ func (c *Client) doPost(ctx context.Context, path string, body any, out any) err
 	if err != nil {
 		return fmt.Errorf("transport: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		if out == nil {
-			io.Copy(io.Discard, resp.Body) // drain for keep-alive
+			_, _ = io.Copy(io.Discard, resp.Body) // drain for keep-alive
 			return nil
 		}
 		return json.NewDecoder(resp.Body).Decode(out)

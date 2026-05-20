@@ -1,4 +1,3 @@
-{{- if .Values.config.prometheusAddr }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,8 +10,7 @@ spec:
   selector:
     {{- include "outpost.selectorLabels" . | nindent 4 }}
   ports:
-    - name: metrics
-      port: 9091
-      targetPort: metrics
+    - name: http
+      port: 8080
+      targetPort: http
       protocol: TCP
-{{- end }}

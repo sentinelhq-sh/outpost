@@ -29,6 +29,9 @@ spec:
       serviceAccountName: {{ include "outpost.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -41,6 +44,8 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
+            - name: SENTINELHQ_AGENT_MODE
+              value: {{ .Values.config.agentMode | quote }}
             - name: SENTINELHQ_CLUSTER_NAME
               value: {{ .Values.config.clusterName | quote }}
             - name: SENTINELHQ_POLL_INTERVAL
@@ -58,33 +63,26 @@ spec:
                   name: {{ .Values.existingSecret | default (include "outpost.fullname" .) }}
                   key: {{ .Values.existingSecretKey }}
             {{- end }}
-            {{- if .Values.config.prometheusAddr }}
-            - name: SENTINELHQ_PROMETHEUS_ADDR
-              value: {{ .Values.config.prometheusAddr | quote }}
-            {{- end }}
+            - name: SENTINELHQ_ADDR
+              value: {{ .Values.config.addr | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
           ports:
-            - name: healthz
-              containerPort: 9090
+            - name: http
+              containerPort: 8080
               protocol: TCP
-            {{- if .Values.config.prometheusAddr }}
-            - name: metrics
-              containerPort: 9091
-              protocol: TCP
-            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
-              port: healthz
+              port: http
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: healthz
+              port: http
             initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
           resources:
@@ -97,7 +95,14 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "outpost.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+        {{- end }}
