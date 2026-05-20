@@ -1,0 +1,62 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/sentinelhq-sh/outpost
+  pullPolicy: IfNotPresent
+  tag: ""  # defaults to Chart.appVersion
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# SentinelHQ push mode — set apiUrl + apiKey to enable.
+# Leave both empty to run in standalone Prometheus mode.
+config:
+  clusterName: "default"
+  apiUrl: ""
+  apiKey: ""
+  pollInterval: "5m"
+  httpTimeout: "10s"
+  prometheusAddr: ""   # e.g. ":9091" to enable /metrics endpoint
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Secret holding SENTINELHQ_API_KEY.
+# If set, the chart references this existing secret instead of creating one.
+existingSecret: ""
+existingSecretKey: "api-key"
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Liveness / readiness probes against the healthz server (:9090).
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 15
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Prometheus ServiceMonitor (requires prometheus-operator CRDs).
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: "30s"
+  scrapeTimeout: "10s"
+  labels: {}

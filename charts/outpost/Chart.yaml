@@ -1,0 +1,17 @@
+apiVersion: v2
+name: outpost
+description: SentinelHQ Kubernetes agent — watches CronJobs and reports to the SentinelHQ backend or exposes Prometheus metrics.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/sentinelhq-sh/outpost
+sources:
+  - https://github.com/sentinelhq-sh/outpost
+keywords:
+  - sentinelhq
+  - cronjob
+  - monitoring
+  - kubernetes
+maintainers:
+  - name: SentinelHQ
+    url: https://github.com/sentinelhq-sh

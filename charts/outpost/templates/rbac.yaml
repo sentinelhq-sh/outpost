@@ -1,0 +1,29 @@
+# ClusterRole: read-only access to CronJobs and leases across all namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "outpost.fullname" . }}
+  labels:
+    {{- include "outpost.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "outpost.fullname" . }}
+  labels:
+    {{- include "outpost.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "outpost.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "outpost.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

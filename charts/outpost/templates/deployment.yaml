@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "outpost.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "outpost.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "outpost.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "outpost.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "outpost.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: outpost
+          image: {{ include "outpost.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: SENTINELHQ_CLUSTER_NAME
+              value: {{ .Values.config.clusterName | quote }}
+            - name: SENTINELHQ_POLL_INTERVAL
+              value: {{ .Values.config.pollInterval | quote }}
+            - name: SENTINELHQ_HTTP_TIMEOUT
+              value: {{ .Values.config.httpTimeout | quote }}
+            {{- if .Values.config.apiUrl }}
+            - name: SENTINELHQ_API_URL
+              value: {{ .Values.config.apiUrl | quote }}
+            {{- end }}
+            {{- if or .Values.config.apiKey .Values.existingSecret }}
+            - name: SENTINELHQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (include "outpost.fullname" .) }}
+                  key: {{ .Values.existingSecretKey }}
+            {{- end }}
+            {{- if .Values.config.prometheusAddr }}
+            - name: SENTINELHQ_PROMETHEUS_ADDR
+              value: {{ .Values.config.prometheusAddr | quote }}
+            {{- end }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: healthz
+              containerPort: 9090
+              protocol: TCP
+            {{- if .Values.config.prometheusAddr }}
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: healthz
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

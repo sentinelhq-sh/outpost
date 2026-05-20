@@ -1,0 +1,16 @@
+SentinelHQ Outpost deployed successfully.
+
+{{- if and .Values.config.apiUrl .Values.config.apiKey }}
+Mode: Push → {{ .Values.config.apiUrl }}
+Cluster: {{ .Values.config.clusterName }}
+{{- else if .Values.config.prometheusAddr }}
+Mode: Standalone Prometheus
+Metrics: {{ .Values.config.prometheusAddr }}/metrics
+{{- else }}
+WARNING: No output mode configured.
+Set config.apiUrl + config.apiKey (push mode) or config.prometheusAddr (Prometheus mode).
+{{- end }}
+
+Check agent status:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "outpost.name" . }}
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name={{ include "outpost.name" . }} --tail=50

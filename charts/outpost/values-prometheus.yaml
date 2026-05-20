@@ -1,0 +1,19 @@
+# Standalone Prometheus mode — no SentinelHQ account required.
+# The agent watches the cluster and exposes CronJob metrics on :9091.
+#
+# Usage:
+#   helm install outpost ./charts/outpost \
+#     --namespace sentinelhq --create-namespace \
+#     -f charts/outpost/values-prometheus.yaml \
+#     --set config.clusterName=my-cluster
+
+replicaCount: 2
+
+config:
+  clusterName: "default"
+  apiUrl: ""
+  apiKey: ""
+  prometheusAddr: ":9091"
+
+serviceMonitor:
+  enabled: false   # set to true if prometheus-operator is installed

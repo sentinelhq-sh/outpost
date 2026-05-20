@@ -137,3 +137,34 @@ jobs:
             COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  helm:
+    name: Helm chart (ghcr.io/sentinelhq-sh/charts)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
+
+      - name: Package chart
+        run: |
+          VERSION="${{ github.ref_name }}"
+          # Strip leading 'v' for Helm chart version (semver without prefix).
+          CHART_VERSION="${VERSION#v}"
+          helm package charts/outpost \
+            --version "${CHART_VERSION}" \
+            --app-version "${VERSION}" \
+            --destination dist/
+
+      - name: Push chart
+        run: |
+          CHART_VERSION="${{ github.ref_name }}"
+          CHART_VERSION="${CHART_VERSION#v}"
+          helm push "dist/outpost-${CHART_VERSION}.tgz" oci://ghcr.io/sentinelhq-sh/charts
