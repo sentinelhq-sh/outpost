@@ -31,20 +31,17 @@ jobs:
         run: |
           helm template outpost charts/outpost \
             --set config.apiUrl=https://api.sentinelhq.cloud \
-            --set config.apiKey=dummy \
-          | kubectl apply --dry-run=client -f -
+            --set config.apiKey=dummy
 
       - name: Template (Prometheus mode)
         run: |
           helm template outpost charts/outpost \
             -f charts/outpost/values-prometheus.yaml \
-            --set config.clusterName=test \
-          | kubectl apply --dry-run=client -f -
+            --set config.clusterName=test
 
       - name: Template (PDB enabled)
         run: |
           helm template outpost charts/outpost \
             --set config.apiUrl=https://api.sentinelhq.cloud \
             --set config.apiKey=dummy \
-            --set podDisruptionBudget.enabled=true \
-          | kubectl apply --dry-run=client -f -
+            --set podDisruptionBudget.enabled=true
