@@ -48,6 +48,15 @@ spec:
               value: {{ .Values.config.agentMode | quote }}
             - name: SENTINELHQ_CLUSTER_NAME
               value: {{ .Values.config.clusterName | quote }}
+            # One Helm release = ONE logical agent. The release-derived name is
+            # stable across all pods and redeploys, so the backend sees a single
+            # agent; K8s HA between pods stays invisible to it. Pod-local
+            # identity (machine-id/hostname) must NOT leak here, or each pod
+            # would register as a separate agent.
+            - name: SENTINELHQ_FINGERPRINT
+              value: {{ .Values.config.fingerprint | default (printf "k8s/%s/%s" .Release.Namespace (include "outpost.fullname" .)) | quote }}
+            - name: SENTINELHQ_AGENT_NAME
+              value: {{ .Values.config.agentName | default (include "outpost.fullname" .) | quote }}
             - name: SENTINELHQ_POLL_INTERVAL
               value: {{ .Values.config.pollInterval | quote }}
             - name: SENTINELHQ_HTTP_TIMEOUT

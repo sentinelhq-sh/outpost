@@ -21,12 +21,14 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/sentinelhq-sh/outpost/internal/config"
 	"github.com/sentinelhq-sh/outpost/internal/emitter"
 	"github.com/sentinelhq-sh/outpost/internal/k8sclient"
 	"github.com/sentinelhq-sh/outpost/internal/leaderelector"
 	"github.com/sentinelhq-sh/outpost/internal/metrics"
+	"github.com/sentinelhq-sh/outpost/internal/prober"
 	"github.com/sentinelhq-sh/outpost/internal/registrar"
 	"github.com/sentinelhq-sh/outpost/internal/reporter"
 	"github.com/sentinelhq-sh/outpost/internal/version"
@@ -67,78 +69,126 @@ func main() {
 
 	prom := metrics.New(cfg.ClusterName)
 
-	// k8s client — required regardless of mode (we always watch the cluster).
-	kclient, namespace, err := k8sclient.New()
-	if err != nil {
-		logger.Error("kubernetes client init failed", "error", err.Error())
-		os.Exit(1)
+	// Resolve the runtime: try Kubernetes unless explicitly standalone. In auto
+	// mode a K8s failure downgrades to standalone; in kubernetes mode it's fatal.
+	var kclient kubernetes.Interface
+	var namespace string
+	if cfg.Runtime != config.RuntimeStandalone {
+		kclient, namespace, err = k8sclient.New()
+		if err != nil {
+			if cfg.Runtime == config.RuntimeKubernetes {
+				logger.Error("kubernetes client init failed", "error", err.Error())
+				os.Exit(1)
+			}
+			logger.Info("kubernetes unavailable — running standalone (probes only)", "error", err.Error())
+			kclient = nil
+		} else {
+			logger.Info("kubernetes client ready", "namespace", namespace)
+		}
+	} else {
+		logger.Info("standalone runtime — Kubernetes disabled (probes only)")
 	}
-	logger.Info("kubernetes client ready", "namespace", namespace)
 
-	identity := os.Getenv("POD_NAME")
-	if identity == "" {
-		identity, _ = os.Hostname()
+	standalone := kclient == nil
+
+	// Report the effective execution environment (MonitorRuntime). If we attached
+	// to a cluster, kubernetes is authoritative; otherwise detect from the host
+	// (docker/systemd/proxmox/manual). An operator override is honored inside
+	// DetectMonitorRuntime.
+	if pushClient != nil {
+		runtime := config.MonitorRuntimeKubernetes
+		if standalone {
+			runtime = config.DetectMonitorRuntime()
+		}
+		pushClient.SetRuntime(runtime)
+		logger.Info("reporting runtime", "runtime", runtime)
 	}
 
-	watch := watcher.New(kclient, 5*time.Minute, logger)
+	// Register with the backend and wait for approval before doing any work.
+	// The agent announces itself (cle projet + fingerprint); an operator must
+	// approve it in the UI. Until then we poll and stay idle.
+	if pushClient != nil {
+		startServer(cfg.Addr, prom, logger) // serve /healthz early so probes pass
+		if !waitForApproval(ctx, pushClient, cfg.PollInterval, logger) {
+			logger.Info("outpost shutting down before approval")
+			return
+		}
+	}
+
+	errCh := make(chan error, 5)
 	em := emitter.New(pushClient, prom, leaderProxy{}, logger)
 
-	// The registrar is only useful in push mode — without a backend to push
-	// to, there's nothing to register. In Prometheus-only mode it's nil.
-	var reg *registrar.Registrar
-	if pushClient != nil {
-		reg = registrar.New(pushClient, leaderProxy{}, cfg.ClusterName, cfg.PollInterval, logger)
-	}
-
-	// Leader election — still needed in Prometheus-only mode? No, because
-	// nothing in that mode is leader-gated. But running it is harmless and
-	// keeps a single code path. The metric is informative regardless.
-	elector, err := leaderelector.New(kclient, leaderelector.Options{
-		LeaseName: "sentinelhq-outpost",
-		Namespace: namespace,
-		Identity:  identity,
-	}, logger)
-	if err != nil {
-		logger.Error("leader elector init failed", "error", err.Error())
-		os.Exit(1)
-	}
-
-	leaderFlag.Store(false)
-	elector.OnAcquire(func(_ context.Context) {
+	if standalone {
+		// No cluster: the agent is the sole instance, so it's leader by
+		// definition. No watcher, no registrar, no Lease.
 		leaderFlag.Store(true)
-		readyz.Store(true)
 		prom.SetLeader(true)
-	})
-	elector.OnLose(func() {
-		leaderFlag.Store(false)
-		prom.SetLeader(false)
-	})
-
-	startServer(cfg.Addr, prom, logger)
-
-	// In Prometheus-only mode there's no smoke-test to do — flip readyz
-	// immediately so the pod can accept scrapes right away.
-	if !cfg.PushEnabled() {
 		readyz.Store(true)
-	}
+	} else {
+		identity := os.Getenv("POD_NAME")
+		if identity == "" {
+			identity, _ = os.Hostname()
+		}
 
-	// Long-running goroutines. They all watch ctx and exit cleanly on cancel.
-	errCh := make(chan error, 4)
+		watch := watcher.New(kclient, 5*time.Minute, logger)
 
-	go func() { errCh <- elector.Run(ctx) }()
-	go func() { errCh <- watch.Run(ctx) }()
-	go func() {
-		em.Run(ctx, watch.Lifecycles())
-		errCh <- nil
-	}()
-	if reg != nil {
+		var reg *registrar.Registrar
+		if pushClient != nil {
+			reg = registrar.New(pushClient, leaderProxy{}, cfg.ClusterName, cfg.PollInterval, logger)
+		}
+
+		elector, eerr := leaderelector.New(kclient, leaderelector.Options{
+			LeaseName: "sentinelhq-outpost",
+			Namespace: namespace,
+			Identity:  identity,
+		}, logger)
+		if eerr != nil {
+			logger.Error("leader elector init failed", "error", eerr.Error())
+			os.Exit(1)
+		}
+
+		leaderFlag.Store(false)
+		elector.OnAcquire(func(_ context.Context) {
+			leaderFlag.Store(true)
+			readyz.Store(true)
+			prom.SetLeader(true)
+		})
+		elector.OnLose(func() {
+			leaderFlag.Store(false)
+			prom.SetLeader(false)
+		})
+
+		go func() { errCh <- elector.Run(ctx) }()
+		go func() { errCh <- watch.Run(ctx) }()
 		go func() {
-			reg.Run(ctx, watch.Discoveries(), watch.Removals())
+			em.Run(ctx, watch.Lifecycles())
 			errCh <- nil
 		}()
-	} else {
-		// No registrar — drain the channels so the watcher never blocks.
-		go drain(ctx, watch.Discoveries(), watch.Removals(), prom)
+		if reg != nil {
+			go func() {
+				reg.Run(ctx, watch.Discoveries(), watch.Removals())
+				errCh <- nil
+			}()
+		} else {
+			go drain(ctx, watch.Discoveries(), watch.Removals(), prom)
+		}
+	}
+
+	// Prometheus-only mode hasn't started the server yet (push mode did,
+	// before the approval wait). Start it now and flip readyz for scrapes.
+	if !cfg.PushEnabled() {
+		startServer(cfg.Addr, prom, logger)
+		readyz.Store(true)
+	}
+
+	// Probe scheduler — pulls active probes from the backend and executes
+	// them (leader-only). Push mode only. Works with or without Kubernetes.
+	if pushClient != nil {
+		probeScheduler := prober.New(pushClient, leaderProxy{}, cfg.PollInterval, logger)
+		go func() {
+			probeScheduler.Run(ctx)
+			errCh <- nil
+		}()
 	}
 
 	select {
@@ -152,6 +202,33 @@ func main() {
 	}
 
 	time.Sleep(200 * time.Millisecond)
+}
+
+// waitForApproval registers the agent and blocks until the backend reports it
+// approved. Returns false if ctx is cancelled first. Polls every pollInterval
+// while pending/revoked. Register errors are retried (transient backend issues).
+func waitForApproval(ctx context.Context, client *reporter.Client, pollInterval time.Duration, logger *slog.Logger) bool {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		resp, err := client.Register(ctx)
+		switch {
+		case err != nil:
+			logger.Warn("agent registration failed, will retry", "error", err.Error())
+		case resp.Agent.Status == "approved":
+			logger.Info("agent approved — starting work")
+			return true
+		default:
+			logger.Info("agent awaiting approval", "status", resp.Agent.Status)
+		}
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 // drain consumes the discovery channels in Prometheus-only mode so the

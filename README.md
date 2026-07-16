@@ -21,25 +21,25 @@ helm install outpost oci://ghcr.io/sentinelhq-sh/charts/outpost \
   --set config.apiKey=<token>
 ```
 
-Standalone Prometheus mode (no SentinelHQ account required):
+Prometheus-only mode (no SentinelHQ account required):
 
 ```sh
 helm install outpost oci://ghcr.io/sentinelhq-sh/charts/outpost \
   --version 0.1.1 \
   --namespace sentinelhq --create-namespace \
   --set config.clusterName=prod \
-  --set config.prometheusAddr=":9091"
+  --set config.agentMode=prometheus
 ```
 
 ### Helm values
 
 | Value | Default | Description |
 | --- | --- | --- |
-| `config.agentMode` | `sentinel` | Output mode: `sentinel`, `prometheus`, or `both`. |
+| `config.agentMode` | `sentinel` | Output mode: `sentinel` or `prometheus`. |
 | `config.clusterName` | `default` | Logical cluster label sent on every event. |
-| `config.apiUrl` | `""` | SentinelHQ backend URL. Required in `sentinel` and `both` modes. |
+| `config.apiUrl` | `""` | SentinelHQ backend URL. Required in `sentinel` mode. |
 | `config.apiKey` | `""` | API key. Mount via `existingSecret` in production. |
-| `config.prometheusAddr` | `""` | `/metrics` listen address. Required in `prometheus` and `both` modes. |
+| `config.addr` | `:8080` | Listen address for `/healthz`, `/readyz`, and `/metrics`. |
 | `config.pollInterval` | `5m` | Re-sync interval. Minimum 30s. |
 | `replicaCount` | `2` | Number of replicas. Keep at 2+ for HA. |
 | `podDisruptionBudget.enabled` | `false` | Enable PodDisruptionBudget (`minAvailable: 1`). |
@@ -54,12 +54,12 @@ All settings come from environment variables (12-factor):
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SENTINELHQ_AGENT_MODE` | — | Output mode: `sentinel`, `prometheus`, or `both`. Required. |
-| `SENTINELHQ_API_URL` | — | SentinelHQ backend URL. Required in `sentinel` and `both` modes. |
-| `SENTINELHQ_API_KEY` | — | Project API key. Required in `sentinel` and `both` modes. |
+| `SENTINELHQ_AGENT_MODE` | — | Output mode: `sentinel` or `prometheus`. Required. |
+| `SENTINELHQ_RUNTIME` | `auto` | Cluster attachment: `auto`, `kubernetes`, or `standalone`. See [Runtime](#runtime). |
+| `SENTINELHQ_API_URL` | — | SentinelHQ server root (e.g. `https://api.sentinelhq.cloud`), no `/api` suffix — the agent appends `/api/v1/...`. Required in `sentinel` mode. |
+| `SENTINELHQ_API_KEY` | — | Project API key. Required in `sentinel` mode. |
 | `SENTINELHQ_CLUSTER_NAME` | `default` | Logical label sent on every event. |
-| `SENTINELHQ_HEALTHZ_ADDR` | `:9090` | Listen address for `/healthz` and `/readyz`. |
-| `SENTINELHQ_PROMETHEUS_ADDR` | `""` | Listen address for `/metrics`. Required in `prometheus` and `both` modes. |
+| `SENTINELHQ_ADDR` | `:8080` | Listen address for `/healthz`, `/readyz`, and `/metrics`. |
 | `SENTINELHQ_POLL_INTERVAL` | `5m` | Re-sync interval. Minimum 30s. |
 | `SENTINELHQ_HTTP_TIMEOUT` | `10s` | Per-request timeout. |
 
@@ -67,26 +67,56 @@ The agent refuses to start and lists every missing field at once.
 
 ## Output modes
 
-`/metrics` is always exposed on `SENTINELHQ_PROMETHEUS_ADDR` (default `:9091`) regardless of mode.
+`/healthz`, `/readyz`, and `/metrics` are always served on `SENTINELHQ_ADDR`
+(default `:8080`) regardless of mode.
 
 | Mode | Description |
 | --- | --- |
 | `sentinel` | Pushes events to the SentinelHQ backend. Requires `API_URL` + `API_KEY`. |
 | `prometheus` | Metrics only, no push to the SentinelHQ backend. |
 
+## Runtime
+
+`SENTINELHQ_RUNTIME` controls whether the agent attaches to a Kubernetes
+cluster. This is independent of the output mode above.
+
+| Runtime | Description |
+| --- | --- |
+| `auto` (default) | Try Kubernetes; fall back to standalone if no cluster is reachable. |
+| `kubernetes` | Require a cluster — the agent exits if Kubernetes is unreachable. |
+| `standalone` | Never touch Kubernetes. No CronJob watcher, no leader election. |
+
+In **Kubernetes** runtime the agent watches `CronJob`/`Job` resources and
+runs as a Deployment with leader election. In **standalone** runtime it skips
+all of that: it is the sole instance (always leader) and only executes active
+probes (HTTP/TCP/DNS) pulled from the backend, pushing the results. Use it on
+a VM, bare-metal host, Docker, or a laptop — anywhere without Kubernetes.
+
+Standalone requires `sentinel` mode (probes push to the backend):
+
+```sh
+docker run --rm \
+  -e SENTINELHQ_AGENT_MODE=sentinel \
+  -e SENTINELHQ_RUNTIME=standalone \
+  -e SENTINELHQ_API_URL=https://api.sentinelhq.cloud \
+  -e SENTINELHQ_API_KEY=sentinel_live_xxxxxxxxxxxx \
+  ghcr.io/sentinelhq-sh/outpost:latest
+```
+
 ## Run locally
 
 ```sh
 go build -o bin/outpost ./cmd/outpost
 
+SENTINELHQ_AGENT_MODE=sentinel \
 SENTINELHQ_API_URL=http://127.0.0.1:8000 \
 SENTINELHQ_API_KEY=sentinel_live_xxxxxxxxxxxx \
 ./bin/outpost
 ```
 
 ```sh
-curl localhost:9090/healthz
-curl localhost:9090/readyz
+curl localhost:8080/healthz
+curl localhost:8080/readyz
 ```
 
 ## Development
