@@ -211,9 +211,10 @@ func (c *Client) post(ctx context.Context, path string, body any, out any) error
 			return nil
 		}
 
-		// Don't retry client-side errors that won't change on retry
-		// (4xx except 408, 425, 429). doPost flags them via ErrPermanent.
-		if errors.Is(err, ErrPermanent) {
+		// Don't retry client-side errors that won't change within seconds
+		// (4xx except 408, 425, 429). doPost flags them via ErrPermanent or
+		// ErrAuth; callers decide whether to try again much later.
+		if errors.Is(err, ErrPermanent) || errors.Is(err, ErrAuth) {
 			return err
 		}
 		lastErr = err
@@ -249,9 +250,14 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// ErrPermanent flags errors that retrying won't fix (e.g. 401, 403, 404,
-// 422). The caller — and the retry loop — sees this and stops immediately.
+// ErrPermanent flags errors that retrying won't fix (e.g. 404, 422): the
+// request itself is wrong. The caller — and the retry loop — stops immediately.
 var ErrPermanent = errors.New("permanent error")
+
+// ErrAuth flags 401/403: the key or the agent's approval is wrong right now,
+// but it can be fixed server-side (key rotation, approval) without touching
+// the request, so callers holding valuable data should try again later.
+var ErrAuth = errors.New("authentication error")
 
 func (c *Client) doPost(ctx context.Context, path string, body any, out any) error {
 	buf, err := json.Marshal(body)
@@ -289,8 +295,12 @@ func (c *Client) doPost(ctx context.Context, path string, body any, out any) err
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("transient %d: %s", resp.StatusCode, truncate(string(body), 200))
 
+	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%w: %d %s", ErrAuth, resp.StatusCode, truncate(string(body), 200))
+
 	default:
-		// 4xx — won't get better on retry.
+		// Other 4xx — the request is wrong and won't get better on retry.
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("%w: %d %s", ErrPermanent, resp.StatusCode, truncate(string(body), 200))
 	}

@@ -175,9 +175,9 @@ func TestDoesNotRetryPermanentErrors(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
-		// 401 = bad API key. Retrying won't fix it.
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"invalid token"}`))
+		// 404 = unknown monitor. Retrying won't fix it.
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Monitor not found"}`))
 	}))
 	defer srv.Close()
 
@@ -189,6 +189,28 @@ func TestDoesNotRetryPermanentErrors(t *testing.T) {
 	}
 	if attempts.Load() != 1 {
 		t.Errorf("expected 1 attempt (no retry on permanent error), got %d", attempts.Load())
+	}
+}
+
+func TestAuthErrorsAreNotPermanentNorFastRetried(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		var attempts atomic.Int32
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			attempts.Add(1)
+			w.WriteHeader(status)
+		}))
+
+		c := newTestClient(srv)
+		_, err := c.Register(context.Background())
+		srv.Close()
+
+		if !errors.Is(err, ErrAuth) || errors.Is(err, ErrPermanent) {
+			t.Errorf("status %d: expected ErrAuth only, got %v", status, err)
+		}
+		if attempts.Load() != 1 {
+			t.Errorf("status %d: expected 1 attempt, got %d", status, attempts.Load())
+		}
 	}
 }
 
