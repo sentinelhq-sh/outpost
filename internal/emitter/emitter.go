@@ -7,13 +7,9 @@
 //   - SentinelHQ backend push: only on the leader, and only when push mode
 //     is enabled. Standby pods skip the network call.
 //
-// Backend pushes go through an in-memory FIFO: a send that fails because the
-// server is unreachable or the key/approval is being fixed stays queued and
-// is retried with backoff instead of being dropped (a lost "complete" turns
-// into a false missed-run alert). The server dedupes by idempotency_key, so
-// replays are safe, and retrying the head of the queue keeps run order.
-// Events are only dropped when the server rejects them (404/422), when the
-// queue is full (oldest first), or on shutdown.
+// Backend pushes use an in-memory FIFO retried with backoff: a lost "complete"
+// would raise a false missed-run alert. Dropped only on 404/422, full queue
+// (oldest first) or shutdown.
 //
 // Either output can be wired or skipped independently — pass nil to disable.
 package emitter
@@ -146,8 +142,7 @@ func (e *Emitter) enqueue(ev reporter.EventPayload) {
 	}
 }
 
-// sendLoop drains the queue in order. A retryable failure keeps the event at
-// the head and waits, doubling the delay up to maxBackoff.
+// sendLoop drains the queue in order, retrying the head with backoff.
 func (e *Emitter) sendLoop(ctx context.Context) {
 	backoff := e.minBackoff
 
@@ -209,8 +204,7 @@ func (e *Emitter) head() (reporter.EventPayload, bool) {
 	return e.pending[0], true
 }
 
-// remove drops ev if it is still at the head: a full queue may already have
-// evicted it while it was being sent.
+// remove drops ev if still at the head: a full queue may have evicted it.
 func (e *Emitter) remove(ev reporter.EventPayload) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

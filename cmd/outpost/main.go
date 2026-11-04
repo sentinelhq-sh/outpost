@@ -231,9 +231,7 @@ func waitForApproval(ctx context.Context, client *reporter.Client, pollInterval 
 	}
 }
 
-// drain consumes the discovery channels in Prometheus-only mode so the
-// watcher's send-side never blocks, and keeps the tracked-CronJob metrics
-// up to date (the registrar does it in sentinel mode).
+// drain consumes discoveries in Prometheus-only mode and updates tracked metrics.
 func drain(
 	ctx context.Context,
 	discoveries <-chan watcher.DiscoveredJob,

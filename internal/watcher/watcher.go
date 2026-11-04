@@ -70,13 +70,10 @@ type LifecycleEvent struct {
 	ExitCode      int    // 0 = success
 	Message       string // short failure reason, empty on success
 
-	// OccurredAt is when the transition happened according to the Job, not
-	// when the agent observed it.
+	// OccurredAt is the transition time reported by the Job.
 	OccurredAt time.Time
 
-	// Replayed marks a transition that predates this agent's start: informers
-	// list existing Jobs at startup and on resync. It still reaches the backend
-	// (which dedupes) but must not count as a new run in the metrics.
+	// Replayed marks a transition predating this agent: not counted in metrics.
 	Replayed bool
 }
 
@@ -171,8 +168,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 	w.log.Info("informers synced")
 
-	// The channels stay open: informer handlers may still be sending, and every
-	// consumer stops on ctx.
+	// Channels stay open: handlers may still send, consumers stop on ctx.
 	<-ctx.Done()
 	return nil
 }
@@ -385,8 +381,7 @@ func isJobFailed(job *batchv1.Job) bool {
 	return false
 }
 
-// transitionTime returns when the Job reached kind. Kubernetes only sets
-// CompletionTime on success, so failures read their condition instead.
+// transitionTime returns when the Job reached kind (no CompletionTime on failure).
 func transitionTime(job *batchv1.Job, kind EventKind) time.Time {
 	switch kind {
 	case EventRun:

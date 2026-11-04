@@ -52,8 +52,7 @@ podDisruptionBudget:
 
 nodeSelector: {}
 tolerations: []
-# Override to replace the default anti-affinity, which spreads replicas across
-# nodes when it can but still schedules them on a single-node cluster.
+# Replaces the default anti-affinity (preferred, so a single node still works).
 affinity: {}
 
 # Liveness / readiness probes against the healthz server (:9090).

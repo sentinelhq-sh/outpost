@@ -31,16 +31,14 @@ const (
 type Collectors struct {
 	registry *prometheus.Registry
 
-	// Finished runs per CronJob. Labels: namespace, cronjob, status
-	// (complete|fail). Every pod exposes them: aggregate with max by, not sum.
+	// Finished runs by status. Every pod exposes them: aggregate with max by.
 	RunsTotal *prometheus.CounterVec
 
 	// Per-CronJob duration distribution in seconds. Observed at the end of
 	// each Job (complete or fail). Labels: namespace, cronjob.
 	DurationSeconds *prometheus.HistogramVec
 
-	// Job-reported time (Unix seconds) of the latest transition of any kind,
-	// and of the latest success. Labels: namespace, cronjob.
+	// Job-reported Unix time of the latest transition and latest success.
 	LastRunTimestamp     *prometheus.GaugeVec
 	LastSuccessTimestamp *prometheus.GaugeVec
 
@@ -62,8 +60,7 @@ type Run struct {
 	DurationSec   int
 	DurationKnown bool
 	OccurredAt    time.Time
-	// Replayed transitions predate this process: they refresh the timestamps
-	// but are not counted again.
+	// Replayed refreshes the timestamps without counting again.
 	Replayed bool
 }
 
@@ -200,8 +197,7 @@ func (c *Collectors) TrackCronJob(sourceID string) {
 	c.MonitorsActive.Set(float64(len(c.tracked)))
 }
 
-// UntrackCronJob forgets a CronJob that no longer exists or is no longer
-// monitored, and drops its series so it stops appearing in queries.
+// UntrackCronJob forgets a CronJob and drops its series.
 func (c *Collectors) UntrackCronJob(sourceID string) {
 	namespace, cronjob := SplitSourceID(sourceID)
 	labels := prometheus.Labels{"namespace": namespace, "cronjob": cronjob}
@@ -218,8 +214,7 @@ func (c *Collectors) UntrackCronJob(sourceID string) {
 	c.LastSuccessTimestamp.DeletePartialMatch(labels)
 }
 
-// SplitSourceID splits "namespace/name" back into its components. The
-// watcher always uses that exact format; defensive fallback for safety.
+// SplitSourceID splits "namespace/name".
 func SplitSourceID(sourceID string) (namespace, cronjob string) {
 	namespace, cronjob, found := strings.Cut(sourceID, "/")
 	if !found {
