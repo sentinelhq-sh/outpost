@@ -97,6 +97,9 @@ Two things to keep in mind when scraping:
   chart's ServiceMonitor sets it.
 - **Every pod exposes the same series.** Aggregate with `max by`, not `sum`, or
   counts double with two replicas.
+- **Use one cluster name.** `sentinelhq_outpost_info` carries `cluster` from
+  `config.clusterName`, and it wins over Alloy's `external_labels`: set both to the
+  same value.
 
 At startup, Jobs still in the cluster refresh the timestamps with their real
 time but are not counted again. Runs that finish while every pod is down are
