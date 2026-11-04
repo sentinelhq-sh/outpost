@@ -4,7 +4,7 @@
 //
 // Sync strategy: maintain an in-memory snapshot of all currently-known
 // DiscoveredJobs. On any change (or every PollInterval), POST the full
-// list to /api/v1/outpost/register, which is idempotent on the server side.
+// list to /v1/outpost/register, which is idempotent on the server side.
 //
 // Only the leader is allowed to call the registrar's Sync — the channel
 // it reads from is the same on every pod, but the IsLeader gate avoids

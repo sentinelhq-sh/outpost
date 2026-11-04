@@ -56,7 +56,7 @@ All settings come from environment variables (12-factor):
 | --- | --- | --- |
 | `SENTINELHQ_AGENT_MODE` | — | Output mode: `sentinel` or `prometheus`. Required. |
 | `SENTINELHQ_RUNTIME` | `auto` | Cluster attachment: `auto`, `kubernetes`, or `standalone`. See [Runtime](#runtime). |
-| `SENTINELHQ_API_URL` | — | SentinelHQ server root (e.g. `https://api.sentinelhq.cloud`), no `/api` suffix — the agent appends `/api/v1/...`. Required in `sentinel` mode. |
+| `SENTINELHQ_API_URL` | — | SentinelHQ API root (`https://api.sentinelhq.cloud`, or `http://host/api` without a dedicated API domain) — the agent appends `/v1/...`. Required in `sentinel` mode. |
 | `SENTINELHQ_API_KEY` | — | Project API key. Required in `sentinel` mode. |
 | `SENTINELHQ_CLUSTER_NAME` | `default` | Logical label sent on every event. |
 | `SENTINELHQ_ADDR` | `:8080` | Listen address for `/healthz`, `/readyz`, and `/metrics`. |

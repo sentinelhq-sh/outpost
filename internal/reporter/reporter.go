@@ -63,7 +63,7 @@ type DiscoveredJob struct {
 	SourceMeta  map[string]any `json:"source_meta,omitempty"`
 }
 
-// JobsPayload is the body of POST /api/v1/outpost/jobs (CronJob discovery).
+// JobsPayload is the body of POST /v1/outpost/jobs (CronJob discovery).
 type JobsPayload struct {
 	Runtime    string          `json:"runtime"`
 	SourceMeta map[string]any  `json:"source_meta,omitempty"`
@@ -80,13 +80,13 @@ type JobsResponse struct {
 // this agent. Requires the agent to be approved (else 403).
 func (c *Client) ReportJobs(ctx context.Context, payload JobsPayload) (*JobsResponse, error) {
 	var out JobsResponse
-	if err := c.post(ctx, "/api/v1/outpost/jobs", payload, &out); err != nil {
+	if err := c.post(ctx, "/v1/outpost/jobs", payload, &out); err != nil {
 		return nil, fmt.Errorf("report jobs: %w", err)
 	}
 	return &out, nil
 }
 
-// RegisterPayload is the body of POST /api/v1/outpost/register. The agent
+// RegisterPayload is the body of POST /v1/outpost/register. The agent
 // announces itself; the backend keys it on (project, fingerprint).
 type RegisterPayload struct {
 	Fingerprint string         `json:"fingerprint"`
@@ -111,13 +111,13 @@ func (c *Client) Register(ctx context.Context) (*RegisterResponse, error) {
 		Runtime:     c.runtime,
 	}
 	var out RegisterResponse
-	if err := c.post(ctx, "/api/v1/outpost/register", payload, &out); err != nil {
+	if err := c.post(ctx, "/v1/outpost/register", payload, &out); err != nil {
 		return nil, fmt.Errorf("register: %w", err)
 	}
 	return &out, nil
 }
 
-// EventPayload is the body of POST /api/v1/outpost/events. The agent emits one
+// EventPayload is the body of POST /v1/outpost/events. The agent emits one
 // per CronJob/Job/Pod state change it observes.
 type EventPayload struct {
 	SourceID       string `json:"source_id"`
@@ -131,10 +131,10 @@ type EventPayload struct {
 // Event reports a single state change. Idempotency: the server dedupes by
 // idempotency_key so retries on transient errors are safe.
 func (c *Client) Event(ctx context.Context, payload EventPayload) error {
-	return c.post(ctx, "/api/v1/outpost/events", payload, nil)
+	return c.post(ctx, "/v1/outpost/events", payload, nil)
 }
 
-// HeartbeatResponse is the body of POST /api/v1/outpost/heartbeat. Epochs maps
+// HeartbeatResponse is the body of POST /v1/outpost/heartbeat. Epochs maps
 // monitor_id -> a version that bumps whenever that pool's active/standby layout
 // changes; the agent re-pulls /config when an epoch it tracks moves.
 type HeartbeatResponse struct {
@@ -147,7 +147,7 @@ type HeartbeatResponse struct {
 // tolerates a few misses before failing the agent over.
 func (c *Client) Heartbeat(ctx context.Context) (*HeartbeatResponse, error) {
 	var out HeartbeatResponse
-	if err := c.doPost(ctx, "/api/v1/outpost/heartbeat", struct{}{}, &out); err != nil {
+	if err := c.doPost(ctx, "/v1/outpost/heartbeat", struct{}{}, &out); err != nil {
 		return nil, fmt.Errorf("heartbeat: %w", err)
 	}
 	return &out, nil
@@ -171,7 +171,7 @@ type ProbeSpec struct {
 	VerifyTLS       bool   `json:"verify_tls"`                // http
 }
 
-// ConfigResponse is the body of GET /api/v1/outpost/config. Monitors are the
+// ConfigResponse is the body of GET /v1/outpost/config. Monitors are the
 // observed-job side (watched via the K8s API); Probes are the active side
 // the agent must execute itself.
 type ConfigResponse struct {
@@ -183,7 +183,7 @@ type ConfigResponse struct {
 // execute. Called periodically so server-side changes propagate.
 func (c *Client) Config(ctx context.Context) (*ConfigResponse, error) {
 	var out ConfigResponse
-	if err := c.get(ctx, "/api/v1/outpost/config", &out); err != nil {
+	if err := c.get(ctx, "/v1/outpost/config", &out); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return &out, nil
