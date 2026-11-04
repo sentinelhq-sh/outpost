@@ -15,6 +15,8 @@ spec:
       {{- include "outpost.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: http
+      # Keep the CronJob's namespace label instead of exported_namespace.
+      honorLabels: true
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
       path: /metrics

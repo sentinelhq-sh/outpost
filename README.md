@@ -75,6 +75,92 @@ The agent refuses to start and lists every missing field at once.
 | `sentinel` | Pushes events to the SentinelHQ backend. Requires `API_URL` + `API_KEY`. |
 | `prometheus` | Metrics only, no push to the SentinelHQ backend. |
 
+## Metrics (Prometheus, Alloy, Mimir)
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `sentinelhq_cronjob_runs_total` | counter | `namespace`, `cronjob`, `status` | Finished runs by outcome (`complete`, `fail`) |
+| `sentinelhq_cronjob_duration_seconds` | histogram | `namespace`, `cronjob` | Duration of finished runs |
+| `sentinelhq_cronjob_last_run_timestamp_seconds` | gauge | `namespace`, `cronjob` | Last run start or end, from the Job |
+| `sentinelhq_cronjob_last_success_timestamp_seconds` | gauge | `namespace`, `cronjob` | Last successful run, from the Job |
+| `sentinelhq_outpost_leader` | gauge | | 1 on the pod holding the lease |
+| `sentinelhq_outpost_monitors_active` | gauge | | Annotated CronJobs tracked |
+| `sentinelhq_outpost_info` | gauge | `version`, `commit`, `cluster` | Build info, always 1 |
+
+Standard `go_*` and `process_*` metrics are exposed too. Active probes report to
+the SentinelHQ backend only.
+
+Two things to keep in mind when scraping:
+
+- **Honor labels.** `namespace` is the CronJob's namespace. Without `honor_labels`,
+  it is renamed `exported_namespace` and replaced by the agent's namespace. The
+  chart's ServiceMonitor sets it.
+- **Every pod exposes the same series.** Aggregate with `max by`, not `sum`, or
+  counts double with two replicas.
+
+At startup, Jobs still in the cluster refresh the timestamps with their real
+time but are not counted again. Runs that finish while every pod is down are
+missing from the counters; the timestamps catch up.
+
+### Alloy with the ServiceMonitor
+
+Install with `--set serviceMonitor.enabled=true` (requires the prometheus-operator CRDs):
+
+```alloy
+prometheus.operator.servicemonitors "outpost" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  // Metrics carry no cluster label: add it here for multi-cluster setups.
+  external_labels = { cluster = "homelab" }
+
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
+  }
+}
+```
+
+### Alloy without the CRDs
+
+```alloy
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "outpost" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_container_port_name"]
+    regex         = "outpost;http"
+    action        = "keep"
+  }
+}
+
+prometheus.scrape "outpost" {
+  targets      = discovery.relabel.outpost.output
+  honor_labels = true
+  forward_to   = [prometheus.remote_write.mimir.receiver]
+}
+```
+
+### Useful queries
+
+```promql
+# No success for 26 hours (daily job)
+time() - max by (namespace, cronjob) (sentinelhq_cronjob_last_success_timestamp_seconds) > 93600
+
+# A run failed in the last hour
+max by (namespace, cronjob) (increase(sentinelhq_cronjob_runs_total{status="fail"}[1h])) > 0
+
+# p95 duration
+histogram_quantile(0.95, max by (namespace, cronjob, le) (rate(sentinelhq_cronjob_duration_seconds_bucket[1d])))
+```
+
+The timestamp series appear after a CronJob's first run: combine with `absent()`
+to catch one that never ran.
+
 ## Runtime
 
 `SENTINELHQ_RUNTIME` controls whether the agent attaches to a Kubernetes

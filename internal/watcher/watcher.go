@@ -65,16 +65,27 @@ type LifecycleEvent struct {
 	// Job's UID — guaranteed unique across the cluster lifetime.
 	IdempotencyKey string
 
-	Duration int    // seconds, 0 when unknown
-	ExitCode int    // 0 = success
-	Message  string // short failure reason, empty on success
+	Duration      int    // seconds
+	DurationKnown bool   // false when the Job's timestamps don't give a duration
+	ExitCode      int    // 0 = success
+	Message       string // short failure reason, empty on success
+
+	// OccurredAt is when the transition happened according to the Job, not
+	// when the agent observed it.
+	OccurredAt time.Time
+
+	// Replayed marks a transition that predates this agent's start: informers
+	// list existing Jobs at startup and on resync. It still reaches the backend
+	// (which dedupes) but must not count as a new run in the metrics.
+	Replayed bool
 }
 
 // Watcher owns the informers and the channels the rest of the agent reads
 // from. Start it once; cancel the ctx to stop.
 type Watcher struct {
-	client kubernetes.Interface
-	log    *slog.Logger
+	client    kubernetes.Interface
+	log       *slog.Logger
+	startedAt time.Time // set in Run(); see LifecycleEvent.Replayed
 
 	factory    informers.SharedInformerFactory
 	cronLister batchv1listers.CronJobLister // set in Run(); used by onJobChange
@@ -115,7 +126,6 @@ func New(client kubernetes.Interface, resync time.Duration, log *slog.Logger) *W
 }
 
 // Discoveries returns the channel emitting every annotated CronJob seen.
-// Closed when the underlying context cancels.
 func (w *Watcher) Discoveries() <-chan DiscoveredJob { return w.discoveries }
 
 // Removals returns source IDs of CronJobs that vanished (deletion or
@@ -129,6 +139,8 @@ func (w *Watcher) Lifecycles() <-chan LifecycleEvent { return w.lifecycles }
 // Run blocks until ctx is cancelled. It wires up handlers on the CronJob
 // and Job informers and lets the shared factory drive everything.
 func (w *Watcher) Run(ctx context.Context) error {
+	w.startedAt = time.Now()
+
 	cronJobs := w.factory.Batch().V1().CronJobs()
 	w.cronLister = cronJobs.Lister()
 
@@ -159,10 +171,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 	w.log.Info("informers synced")
 
+	// The channels stay open: informer handlers may still be sending, and every
+	// consumer stops on ctx.
 	<-ctx.Done()
-	close(w.discoveries)
-	close(w.removals)
-	close(w.lifecycles)
 	return nil
 }
 
@@ -269,17 +280,20 @@ func (w *Watcher) onJobChange(obj any) {
 	w.jobStates[uid] = kind
 	w.mu.Unlock()
 
+	occurredAt := transitionTime(job, kind)
 	ev := LifecycleEvent{
 		SourceID:       sourceID,
 		Kind:           kind,
 		IdempotencyKey: uid + ":" + string(kind),
+		OccurredAt:     occurredAt,
+		Replayed:       occurredAt.Before(w.startedAt),
 	}
 	switch kind {
 	case EventFail:
-		ev.Duration = jobDuration(job)
+		ev.Duration, ev.DurationKnown = jobDuration(job, occurredAt)
 		ev.Message = failMessage(job)
 	case EventComplete:
-		ev.Duration = jobDuration(job)
+		ev.Duration, ev.DurationKnown = jobDuration(job, occurredAt)
 	}
 
 	w.lifecycles <- ev
@@ -371,11 +385,43 @@ func isJobFailed(job *batchv1.Job) bool {
 	return false
 }
 
-func jobDuration(job *batchv1.Job) int {
-	if job.Status.StartTime == nil || job.Status.CompletionTime == nil {
-		return 0
+// transitionTime returns when the Job reached kind. Kubernetes only sets
+// CompletionTime on success, so failures read their condition instead.
+func transitionTime(job *batchv1.Job, kind EventKind) time.Time {
+	switch kind {
+	case EventRun:
+		if job.Status.StartTime != nil {
+			return job.Status.StartTime.Time
+		}
+	case EventComplete:
+		if job.Status.CompletionTime != nil {
+			return job.Status.CompletionTime.Time
+		}
+		if t := conditionTime(job, batchv1.JobComplete); !t.IsZero() {
+			return t
+		}
+	case EventFail:
+		if t := conditionTime(job, batchv1.JobFailed); !t.IsZero() {
+			return t
+		}
 	}
-	return int(job.Status.CompletionTime.Sub(job.Status.StartTime.Time).Seconds())
+	return time.Now()
+}
+
+func conditionTime(job *batchv1.Job, condition batchv1.JobConditionType) time.Time {
+	for _, c := range job.Status.Conditions {
+		if c.Type == condition && c.Status == corev1.ConditionTrue {
+			return c.LastTransitionTime.Time
+		}
+	}
+	return time.Time{}
+}
+
+func jobDuration(job *batchv1.Job, end time.Time) (int, bool) {
+	if job.Status.StartTime == nil || end.Before(job.Status.StartTime.Time) {
+		return 0, false
+	}
+	return int(end.Sub(job.Status.StartTime.Time).Seconds()), true
 }
 
 func failMessage(job *batchv1.Job) string {

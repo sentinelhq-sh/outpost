@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sentinelhq-sh/outpost/internal/metrics"
 	"github.com/sentinelhq-sh/outpost/internal/reporter"
 	"github.com/sentinelhq-sh/outpost/internal/watcher"
 )
@@ -32,6 +33,7 @@ type LeaderChecker interface {
 // reconciles that map with the SentinelHQ server.
 type Registrar struct {
 	client       *reporter.Client
+	metrics      *metrics.Collectors
 	leader       LeaderChecker
 	log          *slog.Logger
 	pollInterval time.Duration
@@ -45,6 +47,7 @@ type Registrar struct {
 // New builds an idle Registrar. Call Run to start consuming events.
 func New(
 	client *reporter.Client,
+	m *metrics.Collectors,
 	leader LeaderChecker,
 	clusterName string,
 	pollInterval time.Duration,
@@ -52,6 +55,7 @@ func New(
 ) *Registrar {
 	return &Registrar{
 		client:       client,
+		metrics:      m,
 		leader:       leader,
 		clusterName:  clusterName,
 		pollInterval: pollInterval,
@@ -79,12 +83,14 @@ func (r *Registrar) Run(
 			if !ok {
 				return
 			}
+			r.metrics.TrackCronJob(d.SourceID)
 			r.upsert(d)
 
 		case sourceID, ok := <-removals:
 			if !ok {
 				return
 			}
+			r.metrics.UntrackCronJob(sourceID)
 			r.remove(sourceID)
 
 		case <-tick.C:

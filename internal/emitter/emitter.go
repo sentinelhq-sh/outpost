@@ -22,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -96,12 +95,14 @@ func (e *Emitter) dispatch(ctx context.Context, ev watcher.LifecycleEvent) {
 	// Prometheus first: cheap, in-memory, runs on every pod so the metric
 	// stays consistent regardless of which one a scraper hits.
 	if e.metrics != nil {
-		namespace, cronjob := splitSourceID(ev.SourceID)
-		e.metrics.RecordRun(
-			namespace, cronjob, string(ev.Kind),
-			ev.Duration,
-			time.Now().Unix(),
-		)
+		e.metrics.RecordRun(metrics.Run{
+			SourceID:      ev.SourceID,
+			Status:        string(ev.Kind),
+			DurationSec:   ev.Duration,
+			DurationKnown: ev.DurationKnown,
+			OccurredAt:    ev.OccurredAt,
+			Replayed:      ev.Replayed,
+		})
 	}
 
 	// Backend push: only the leader, and only when configured.
@@ -222,14 +223,4 @@ func (e *Emitter) size() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.pending)
-}
-
-// splitSourceID splits "namespace/name" back into its components. The
-// watcher always uses that exact format; defensive fallback for safety.
-func splitSourceID(sourceID string) (namespace, cronjob string) {
-	idx := strings.IndexByte(sourceID, '/')
-	if idx < 0 {
-		return "default", sourceID
-	}
-	return sourceID[:idx], sourceID[idx+1:]
 }

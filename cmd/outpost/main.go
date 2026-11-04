@@ -134,7 +134,7 @@ func main() {
 
 		var reg *registrar.Registrar
 		if pushClient != nil {
-			reg = registrar.New(pushClient, leaderProxy{}, cfg.ClusterName, cfg.PollInterval, logger)
+			reg = registrar.New(pushClient, prom, leaderProxy{}, cfg.ClusterName, cfg.PollInterval, logger)
 		}
 
 		elector, eerr := leaderelector.New(kclient, leaderelector.Options{
@@ -232,16 +232,14 @@ func waitForApproval(ctx context.Context, client *reporter.Client, pollInterval 
 }
 
 // drain consumes the discovery channels in Prometheus-only mode so the
-// watcher's send-side never blocks. Also keeps the monitors_active gauge
-// up to date as a side effect.
+// watcher's send-side never blocks, and keeps the tracked-CronJob metrics
+// up to date (the registrar does it in sentinel mode).
 func drain(
 	ctx context.Context,
 	discoveries <-chan watcher.DiscoveredJob,
 	removals <-chan string,
 	prom *metrics.Collectors,
 ) {
-	tracked := make(map[string]struct{})
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -250,18 +248,12 @@ func drain(
 			if !ok {
 				return
 			}
-			tracked[d.SourceID] = struct{}{}
-			if prom != nil {
-				prom.SetMonitorsActive(len(tracked))
-			}
+			prom.TrackCronJob(d.SourceID)
 		case id, ok := <-removals:
 			if !ok {
 				return
 			}
-			delete(tracked, id)
-			if prom != nil {
-				prom.SetMonitorsActive(len(tracked))
-			}
+			prom.UntrackCronJob(id)
 		}
 	}
 }

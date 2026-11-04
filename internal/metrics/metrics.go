@@ -9,10 +9,20 @@
 package metrics
 
 import (
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/sentinelhq-sh/outpost/internal/version"
+)
+
+const (
+	statusRun      = "run"
+	statusComplete = "complete"
 )
 
 // Collectors bundles every Prometheus metric the agent owns. Holding them
@@ -21,22 +31,40 @@ import (
 type Collectors struct {
 	registry *prometheus.Registry
 
-	// Per-CronJob counters — incremented as the watcher observes lifecycle
-	// events. Labels: namespace, cronjob, status (complete|fail).
+	// Finished runs per CronJob. Labels: namespace, cronjob, status
+	// (complete|fail). Every pod exposes them: aggregate with max by, not sum.
 	RunsTotal *prometheus.CounterVec
 
 	// Per-CronJob duration distribution in seconds. Observed at the end of
 	// each Job (complete or fail). Labels: namespace, cronjob.
 	DurationSeconds *prometheus.HistogramVec
 
-	// Timestamp (Unix seconds) of the most recent run for each CronJob.
-	// Labels: namespace, cronjob.
-	LastRunTimestamp *prometheus.GaugeVec
+	// Job-reported time (Unix seconds) of the latest transition of any kind,
+	// and of the latest success. Labels: namespace, cronjob.
+	LastRunTimestamp     *prometheus.GaugeVec
+	LastSuccessTimestamp *prometheus.GaugeVec
 
 	// Agent self-health.
 	Leader         prometheus.Gauge
 	MonitorsActive prometheus.Gauge
 	Info           *prometheus.GaugeVec
+
+	mu          sync.Mutex
+	tracked     map[string]struct{} // source IDs of the monitored CronJobs
+	lastRun     map[string]float64  // highest value per source ID: replayed
+	lastSuccess map[string]float64  // Jobs arrive in no particular order
+}
+
+// Run is one lifecycle transition of a CronJob-owned Job.
+type Run struct {
+	SourceID      string // namespace/cronjob
+	Status        string // run | complete | fail
+	DurationSec   int
+	DurationKnown bool
+	OccurredAt    time.Time
+	// Replayed transitions predate this process: they refresh the timestamps
+	// but are not counted again.
+	Replayed bool
 }
 
 // New builds a fresh Registry and registers all collectors. Returns the
@@ -45,14 +73,21 @@ type Collectors struct {
 func New(clusterName string) *Collectors {
 	reg := prometheus.NewRegistry()
 	factory := promauto.With(reg)
+	reg.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
 
 	c := &Collectors{
-		registry: reg,
+		registry:    reg,
+		tracked:     make(map[string]struct{}),
+		lastRun:     make(map[string]float64),
+		lastSuccess: make(map[string]float64),
 
 		RunsTotal: factory.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "sentinelhq_cronjob_runs_total",
-				Help: "Total CronJob executions observed by the agent.",
+				Help: "Finished CronJob runs observed by the agent, by outcome (complete|fail).",
 			},
 			[]string{"namespace", "cronjob", "status"},
 		),
@@ -71,7 +106,15 @@ func New(clusterName string) *Collectors {
 		LastRunTimestamp: factory.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "sentinelhq_cronjob_last_run_timestamp_seconds",
-				Help: "Unix timestamp of the last observed run, regardless of outcome.",
+				Help: "Unix timestamp of the last run start or end, regardless of outcome.",
+			},
+			[]string{"namespace", "cronjob"},
+		),
+
+		LastSuccessTimestamp: factory.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "sentinelhq_cronjob_last_success_timestamp_seconds",
+				Help: "Unix timestamp of the last successful run.",
 			},
 			[]string{"namespace", "cronjob"},
 		),
@@ -114,13 +157,29 @@ func (c *Collectors) Registry() *prometheus.Registry { return c.registry }
 // All mutation goes through typed methods rather than direct counter
 // access, so the call sites read like business code, not Prometheus glue.
 
-// RecordRun bumps the runs counter and the last-run timestamp.
-func (c *Collectors) RecordRun(namespace, cronjob, status string, durationSec int, observedAt int64) {
-	c.RunsTotal.WithLabelValues(namespace, cronjob, status).Inc()
-	c.LastRunTimestamp.WithLabelValues(namespace, cronjob).Set(float64(observedAt))
+// RecordRun updates the timestamps, then counts finished runs seen live.
+func (c *Collectors) RecordRun(r Run) {
+	namespace, cronjob := SplitSourceID(r.SourceID)
+	occurredAt := float64(r.OccurredAt.Unix())
 
-	if durationSec > 0 {
-		c.DurationSeconds.WithLabelValues(namespace, cronjob).Observe(float64(durationSec))
+	c.mu.Lock()
+	if occurredAt > c.lastRun[r.SourceID] {
+		c.lastRun[r.SourceID] = occurredAt
+		c.LastRunTimestamp.WithLabelValues(namespace, cronjob).Set(occurredAt)
+	}
+	if r.Status == statusComplete && occurredAt > c.lastSuccess[r.SourceID] {
+		c.lastSuccess[r.SourceID] = occurredAt
+		c.LastSuccessTimestamp.WithLabelValues(namespace, cronjob).Set(occurredAt)
+	}
+	c.mu.Unlock()
+
+	if r.Replayed || r.Status == statusRun {
+		return
+	}
+
+	c.RunsTotal.WithLabelValues(namespace, cronjob, r.Status).Inc()
+	if r.DurationKnown {
+		c.DurationSeconds.WithLabelValues(namespace, cronjob).Observe(float64(r.DurationSec))
 	}
 }
 
@@ -133,15 +192,38 @@ func (c *Collectors) SetLeader(isLeader bool) {
 	}
 }
 
-// SetMonitorsActive updates the count of tracked CronJobs.
-func (c *Collectors) SetMonitorsActive(n int) {
-	c.MonitorsActive.Set(float64(n))
+// TrackCronJob records a monitored CronJob. Safe to call repeatedly.
+func (c *Collectors) TrackCronJob(sourceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tracked[sourceID] = struct{}{}
+	c.MonitorsActive.Set(float64(len(c.tracked)))
 }
 
-// ForgetCronJob drops the metrics for a CronJob that no longer exists,
-// so a deleted job stops appearing in Prometheus after a restart.
-func (c *Collectors) ForgetCronJob(namespace, cronjob string) {
-	c.RunsTotal.DeletePartialMatch(prometheus.Labels{"namespace": namespace, "cronjob": cronjob})
-	c.DurationSeconds.DeletePartialMatch(prometheus.Labels{"namespace": namespace, "cronjob": cronjob})
-	c.LastRunTimestamp.DeletePartialMatch(prometheus.Labels{"namespace": namespace, "cronjob": cronjob})
+// UntrackCronJob forgets a CronJob that no longer exists or is no longer
+// monitored, and drops its series so it stops appearing in queries.
+func (c *Collectors) UntrackCronJob(sourceID string) {
+	namespace, cronjob := SplitSourceID(sourceID)
+	labels := prometheus.Labels{"namespace": namespace, "cronjob": cronjob}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.tracked, sourceID)
+	delete(c.lastRun, sourceID)
+	delete(c.lastSuccess, sourceID)
+	c.MonitorsActive.Set(float64(len(c.tracked)))
+	c.RunsTotal.DeletePartialMatch(labels)
+	c.DurationSeconds.DeletePartialMatch(labels)
+	c.LastRunTimestamp.DeletePartialMatch(labels)
+	c.LastSuccessTimestamp.DeletePartialMatch(labels)
+}
+
+// SplitSourceID splits "namespace/name" back into its components. The
+// watcher always uses that exact format; defensive fallback for safety.
+func SplitSourceID(sourceID string) (namespace, cronjob string) {
+	namespace, cronjob, found := strings.Cut(sourceID, "/")
+	if !found {
+		return "default", sourceID
+	}
+	return namespace, cronjob
 }
