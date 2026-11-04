@@ -28,7 +28,7 @@ type backend struct {
 
 func (b *backend) handler(target string) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(reporter.ConfigResponse{
 			ProjectID: 1,
 			Probes: []reporter.ProbeSpec{
@@ -36,7 +36,7 @@ func (b *backend) handler(target string) http.Handler {
 			},
 		})
 	})
-	mux.HandleFunc("/api/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var ev reporter.EventPayload
 		_ = json.Unmarshal(body, &ev)
@@ -123,7 +123,7 @@ type swapBackend struct {
 
 func (b *swapBackend) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(reporter.ConfigResponse{
 			ProjectID: 1,
 			Probes: []reporter.ProbeSpec{
@@ -131,7 +131,7 @@ func (b *swapBackend) handler() http.Handler {
 			},
 		})
 	})
-	mux.HandleFunc("/api/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
 		var ev reporter.EventPayload
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &ev)
@@ -198,7 +198,7 @@ type failoverBackend struct {
 
 func (b *failoverBackend) handler(target string) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/outpost/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/v1/outpost/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		// Promotion bumps the epoch once, the signal the agent re-pulls on.
 		if b.promoted.Load() && b.epoch.Load() == 0 {
 			b.epoch.Store(1)
@@ -208,7 +208,7 @@ func (b *failoverBackend) handler(target string) http.Handler {
 			Epochs: map[string]int{"42": int(b.epoch.Load())},
 		})
 	})
-	mux.HandleFunc("/api/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/v1/outpost/config", func(w http.ResponseWriter, _ *http.Request) {
 		probes := []reporter.ProbeSpec{}
 		if b.promoted.Load() {
 			probes = append(probes, reporter.ProbeSpec{
@@ -217,7 +217,7 @@ func (b *failoverBackend) handler(target string) http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(reporter.ConfigResponse{ProjectID: 1, Probes: probes})
 	})
-	mux.HandleFunc("/api/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/outpost/events", func(w http.ResponseWriter, r *http.Request) {
 		var ev reporter.EventPayload
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &ev)

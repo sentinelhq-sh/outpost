@@ -47,7 +47,8 @@ type Config struct {
 	// Defaults to auto.
 	Runtime Runtime
 
-	// APIBaseURL is the SentinelHQ server root (e.g. https://api.sentinelhq.cloud).
+	// APIBaseURL is the SentinelHQ API root (https://api.sentinelhq.cloud, or
+	// http://host/api for a server without a dedicated API domain).
 	// No trailing slash. Required in sentinel and both modes.
 	APIBaseURL string
 

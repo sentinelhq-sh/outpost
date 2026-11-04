@@ -57,8 +57,8 @@ func TestRegisterSuccess(t *testing.T) {
 	if gotFingerprint != "fp-test" {
 		t.Errorf("X-Agent-Fingerprint = %q, want fp-test", gotFingerprint)
 	}
-	if gotPath != "/api/v1/outpost/register" {
-		t.Errorf("path = %q, want /api/v1/outpost/register", gotPath)
+	if gotPath != "/v1/outpost/register" {
+		t.Errorf("path = %q, want /v1/outpost/register", gotPath)
 	}
 	if !strings.Contains(gotBody, `"fingerprint":"fp-test"`) {
 		t.Errorf("body missing fingerprint: %s", gotBody)
@@ -86,8 +86,8 @@ func TestReportJobsSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotPath != "/api/v1/outpost/jobs" {
-		t.Errorf("path = %q, want /api/v1/outpost/jobs", gotPath)
+	if gotPath != "/v1/outpost/jobs" {
+		t.Errorf("path = %q, want /v1/outpost/jobs", gotPath)
 	}
 	if len(resp.Created) != 1 || resp.Created[0] != "a" {
 		t.Errorf("created = %v, want [a]", resp.Created)
@@ -134,8 +134,8 @@ func TestHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
-	if gotPath != "/api/v1/outpost/heartbeat" {
-		t.Errorf("path = %q, want /api/v1/outpost/heartbeat", gotPath)
+	if gotPath != "/v1/outpost/heartbeat" {
+		t.Errorf("path = %q, want /v1/outpost/heartbeat", gotPath)
 	}
 	if gotFingerprint != "fp-test" {
 		t.Errorf("X-Agent-Fingerprint = %q, want fp-test", gotFingerprint)
