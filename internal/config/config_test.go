@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,34 @@ func TestRuntimeInvalidRejected(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for invalid runtime")
+	}
+}
+
+func TestResolveFingerprint(t *testing.T) {
+	cases := []struct {
+		name, pinned, instance, clusterID, want string
+	}{
+		{"pinned wins", "fixed", "ns/outpost", "c0ffee", "fixed"},
+		{"cluster scoped", "", "ns/outpost", "c0ffee", "k8s/c0ffee/ns/outpost"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Fingerprint: tc.pinned, Instance: tc.instance}
+			cfg.ResolveFingerprint(tc.clusterID)
+
+			if cfg.Fingerprint != tc.want {
+				t.Errorf("Fingerprint = %q, want %q", cfg.Fingerprint, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveFingerprintOutsideKubernetesIsPerHost(t *testing.T) {
+	cfg := &Config{}
+	cfg.ResolveFingerprint("ignored")
+
+	if cfg.Fingerprint == "" || strings.HasPrefix(cfg.Fingerprint, "k8s/") {
+		t.Errorf("Fingerprint = %q, want a per-host identity", cfg.Fingerprint)
 	}
 }

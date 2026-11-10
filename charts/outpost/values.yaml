@@ -20,10 +20,12 @@ config:
   addr: ":8080"
   pollInterval: "5m"
   httpTimeout: "10s"
-  # Agent identity, as seen by the backend. One Helm release = one agent.
-  # Both default to the release-derived name (stable across pods/redeploys).
-  # Override only to pin a specific identity across releases.
+  # Agent identity, as seen by the backend. One Helm release in one cluster =
+  # one agent: the default combines the cluster UID with the release.
+  # Pin it only to keep an identity across reinstalls.
   fingerprint: ""
+  # Name shown in the UI. Defaults to <clusterName>/<release> when clusterName
+  # is set, so clusters are easy to tell apart.
   agentName: ""
 
 serviceAccount:

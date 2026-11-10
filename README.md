@@ -41,12 +41,21 @@ helm install outpost oci://ghcr.io/sentinelhq-sh/charts/outpost \
 | `config.apiKey` | `""` | API key. Mount via `existingSecret` in production. |
 | `config.addr` | `:8080` | Listen address for `/healthz`, `/readyz`, and `/metrics`. |
 | `config.pollInterval` | `5m` | Re-sync interval. Minimum 30s. |
+| `config.agentName` | `""` | Name shown in the UI. Defaults to `<clusterName>/<release>`, or `<release>` while `clusterName` is `default`. |
+| `config.fingerprint` | `""` | Pins the agent identity. Empty means one agent per cluster and release (see below). |
 | `replicaCount` | `2` | Number of replicas. Keep at 2+ for HA. |
 | `podDisruptionBudget.enabled` | `false` | Enable PodDisruptionBudget (`minAvailable: 1`). |
 | `existingSecret` | `""` | Use an existing Secret for the API key. |
 | `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor. |
 
 Full reference: [`charts/outpost/values.yaml`](charts/outpost/values.yaml).
+
+### Agent identity
+
+All pods of a release are one agent for the backend. Its identity is
+`k8s/<cluster>/<namespace>/<release>`, where `<cluster>` is the UID of the
+`kube-system` namespace, so the same release name in two clusters gives two
+agents. The agent refuses to start if it cannot read that namespace.
 
 ## Configuration
 
@@ -59,6 +68,8 @@ All settings come from environment variables (12-factor):
 | `SENTINELHQ_API_URL` | — | SentinelHQ API root (`https://api.sentinelhq.cloud`, or `http://host/api` without a dedicated API domain) — the agent appends `/v1/...`. Required in `sentinel` mode. |
 | `SENTINELHQ_API_KEY` | — | Project API key. Required in `sentinel` mode. |
 | `SENTINELHQ_CLUSTER_NAME` | `default` | Logical label sent on every event. |
+| `SENTINELHQ_INSTANCE` | — | Deployment name in its cluster (`namespace/release`), set by the chart. Makes the identity cluster-scoped. |
+| `SENTINELHQ_FINGERPRINT` | machine-id, else hostname | Pins the agent identity. Outside Kubernetes, the default is per host. |
 | `SENTINELHQ_ADDR` | `:8080` | Listen address for `/healthz`, `/readyz`, and `/metrics`. |
 | `SENTINELHQ_POLL_INTERVAL` | `5m` | Re-sync interval. Minimum 30s. |
 | `SENTINELHQ_HTTP_TIMEOUT` | `10s` | Per-request timeout. |

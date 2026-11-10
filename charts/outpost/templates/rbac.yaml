@@ -1,4 +1,5 @@
-# ClusterRole: read-only access to CronJobs and leases across all namespaces.
+# ClusterRole: read-only access to CronJobs across all namespaces, leases for
+# leader election, and kube-system's UID as the cluster identity.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -9,6 +10,10 @@ rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs", "jobs"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["kube-system"]
+    verbs: ["get"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

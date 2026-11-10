@@ -66,8 +66,12 @@ type Config struct {
 	AgentName string
 
 	// Fingerprint is the agent's stable identity within a project. The backend
-	// keys the registered agent on it. Falls back to the hostname.
+	// keys the registered agent on it. Empty until ResolveFingerprint, unless pinned.
 	Fingerprint string
+
+	// Instance names the deployment inside its cluster (namespace/release),
+	// shared by all its pods. Set by the Helm chart.
+	Instance string
 
 	// Addr is the listen address for /healthz, /readyz, and /metrics.
 	Addr string
@@ -103,7 +107,8 @@ func Load() (*Config, error) {
 		APIKey:       getEnv("SENTINELHQ_API_KEY", ""),
 		ClusterName:  getEnv("SENTINELHQ_CLUSTER_NAME", "default"),
 		AgentName:    getEnv("SENTINELHQ_AGENT_NAME", host),
-		Fingerprint:  getEnv("SENTINELHQ_FINGERPRINT", resolveFingerprint(host)),
+		Fingerprint:  getEnv("SENTINELHQ_FINGERPRINT", ""),
+		Instance:     getEnv("SENTINELHQ_INSTANCE", ""),
 		Addr:         getEnv("SENTINELHQ_ADDR", ":8080"),
 		PollInterval: getEnvDuration("SENTINELHQ_POLL_INTERVAL", 5*time.Minute),
 		HTTPTimeout:  getEnvDuration("SENTINELHQ_HTTP_TIMEOUT", 10*time.Second),
@@ -159,10 +164,25 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// resolveFingerprint returns a stable per-host identity: the Linux machine-id
-// if available, else the hostname. Operators can override via SENTINELHQ_FINGERPRINT
-// (e.g. inject the K8s pod/replicaset uid).
-func resolveFingerprint(host string) string {
+// ResolveFingerprint sets the identity when it is not pinned. A Kubernetes
+// deployment is one agent per cluster and release; anything else gets a
+// per-host identity.
+func (c *Config) ResolveFingerprint(clusterID string) {
+	switch {
+	case c.Fingerprint != "":
+	case c.Instance != "" && clusterID != "":
+		c.Fingerprint = "k8s/" + clusterID + "/" + c.Instance
+	default:
+		host, _ := os.Hostname()
+		if host == "" {
+			host = "outpost"
+		}
+		c.Fingerprint = hostFingerprint(host)
+	}
+}
+
+// hostFingerprint returns the Linux machine-id if available, else the hostname.
+func hostFingerprint(host string) string {
 	for _, path := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
 		if b, err := os.ReadFile(path); err == nil {
 			if id := strings.TrimSpace(string(b)); id != "" {
