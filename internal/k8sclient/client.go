@@ -5,8 +5,10 @@
 package k8sclient
 
 import (
+	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -75,4 +77,15 @@ func readNamespaceFromServiceAccountFile() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ClusterID returns the kube-system namespace UID: stable for the cluster's
+// lifetime and unique across clusters, unlike a user-chosen cluster name.
+func ClusterID(ctx context.Context, client kubernetes.Interface) (string, error) {
+	ns, err := client.CoreV1().Namespaces().Get(ctx, "kube-system", metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("read kube-system namespace: %w", err)
+	}
+
+	return string(ns.UID), nil
 }

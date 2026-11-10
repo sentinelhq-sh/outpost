@@ -42,3 +42,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "outpost.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
 {{- end }}
+
+{{/*
+Agent display name: <clusterName>/<fullname> once clusterName is set, else <fullname>.
+*/}}
+{{- define "outpost.agentName" -}}
+{{- if and .Values.config.clusterName (ne .Values.config.clusterName "default") -}}
+{{- printf "%s/%s" .Values.config.clusterName (include "outpost.fullname" .) -}}
+{{- else -}}
+{{- include "outpost.fullname" . -}}
+{{- end -}}
+{{- end }}

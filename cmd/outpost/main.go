@@ -61,12 +61,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Outputs — conditional on config.
-	var pushClient *reporter.Client
-	if cfg.PushEnabled() {
-		pushClient = reporter.New(cfg)
-	}
-
 	prom := metrics.New(cfg.ClusterName)
 
 	// Resolve the runtime: try Kubernetes unless explicitly standalone. In auto
@@ -90,6 +84,24 @@ func main() {
 	}
 
 	standalone := kclient == nil
+
+	// The identity must be known before the reporter announces the agent.
+	clusterID := ""
+	if kclient != nil && cfg.Fingerprint == "" && cfg.Instance != "" {
+		// Without it, two clusters could share one identity: refuse to start.
+		if clusterID, err = k8sclient.ClusterID(ctx, kclient); err != nil {
+			logger.Error("cluster id unavailable: grant get on namespace kube-system", "error", err.Error())
+			os.Exit(1)
+		}
+	}
+	cfg.ResolveFingerprint(clusterID)
+	logger.Info("agent identity", "fingerprint", cfg.Fingerprint)
+
+	// Outputs — conditional on config.
+	var pushClient *reporter.Client
+	if cfg.PushEnabled() {
+		pushClient = reporter.New(cfg)
+	}
 
 	// Report the effective execution environment (MonitorRuntime). If we attached
 	// to a cluster, kubernetes is authoritative; otherwise detect from the host
